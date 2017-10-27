@@ -1,0 +1,172 @@
+{% for argument in argument.imports %}
+import {{ argument }}
+{% endfor %}
+
+{% macro jsonEncodable type %}
+	{{ type.accessLevel }} func toJSON() -> JSON {
+		var jsonDictionary: [String: JSON] = [:]
+		
+		{% for variable in type.allVariables|!annotated:"NoMock" %}
+		{% if variable.isOptional %}
+		if let {{ variable.name}} = {{ variable.name }} {
+		{% endif %}
+			jsonDictionary["{{ variable.annotations.PropertyName|default:variable.name }}"] = {% call freddyEncodeValue variable %}
+		{% if variable.isOptional %}
+		}
+		{% endif %}
+
+		
+		{% endfor %}
+		return .dictionary(jsonDictionary)
+	}		
+{% endmacro %}
+
+{% macro freddyEncodeValue variable %}{#
+#}{% if variable.isArray %}{{ variable.annotations.PropertyName|default:variable.name }}.toJSON(){% else %}{#
+#}{% if variable.unwrappedTypeName == "Date" %}JSONDateWrapper(date: {{ variable.name }}).toJSON(){% else %}{#
+#}{% if variable.type.annotations.AutoFreddy %}{{ variable.annotations.PropertyName|default:variable.name }}.toJSON(){% else %}{#
+#}.{{ variable.unwrappedTypeName|lowercase }}({{ variable.name }}){#
+#}{% endif %}{% endif %}{% endif %}{#
+#}{% endmacro %}
+
+{% macro jsonDecodable type %}
+	{{ type.accessLevel }} {% if type.kind == "class" %}convenience {% endif %}init(json: JSON) throws {
+		{% if type.kind == "class" %}self.init(){% endif %}
+		let jsonRoot = {% if type.annotations.JSONRoot %}try json.decode(at: "{{ type.annotations.JSONRoot }}") as JSON{% else %}json{% endif %}
+	
+		{% for variable in type.allVariables|!annotated:"NoMock" %}
+		{{ variable.name }} = try{% if variable.isOptional %}?{% endif %} {% call freddyDecodeValue variable %}
+	
+		{% endfor %}
+	}		
+{% endmacro %}
+
+{% macro freddyDecodeValue variable %}{#
+#}{% if variable.type.annotations.AutoFreddy %}(jsonRoot.decode(at: "{{ variable.annotations.PropertyName|default:variable.name }}") as {{ variable.unwrappedTypeName}}){% else %}{#
+#}{% if variable.isArray %}jsonRoot.getArray(at: "{{ variable.annotations.PropertyName|default:variable.name }}").map({{ variable.unwrappedTypeName|replace:"[",""|replace:"]","" }}.init){% else %}{#
+#}{% if variable.unwrappedTypeName == "Date" %}(jsonRoot.decode(at: "{{ variable.annotations.PropertyName|default:variable.name }}") as JSONDateWrapper).date{% else %}{#
+#}{% if variable.unwrappedTypeName == "Decimal" %}Decimal(Faker.shared.number.randomDouble()){% else %}{#
+#}{% if variable.unwrappedTypeName == "URL" %}URL(string: "www.google.ca")!{% else %}{#
+#}{% if variable.unwrappedTypeName == "UIImage" %}UIImage(){% else %}{#
+#}{% if variable.unwrappedTypeName == "List" %}UIImage(){% else %}{#
+#}jsonRoot.get{{ variable.unwrappedTypeName }}(at: "{{ variable.annotations.PropertyName|default:variable.name }}"){#
+#}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{#
+#}{% endmacro %}
+
+// Options:
+// sourcery: PropertyName=xxxx -> if property of JSON is different
+
+{% for type in types.structs|annotated:"AutoFreddyEncodable" %}
+extension {{ type.name }}: JSONEncodable {
+	{% call jsonEncodable type %}
+}
+{% endfor %}
+
+{% for type in types.classes|annotated:"AutoFreddyEncodable" %}
+extension {{ type.name }}: JSONEncodable {
+	{% call jsonEncodable type %}
+}
+{% endfor %}
+
+{% for type in types.structs|annotated:"AutoFreddyDecodable" %}
+extension {{ type.name }}: JSONDecodable {
+{% call jsonDecodable type %}
+}
+{% endfor %}
+
+{% for type in types.classes|annotated:"AutoFreddyDecodable" %}
+extension {{ type.name }}: JSONDecodable {
+{% call jsonDecodable type %}
+}
+{% endfor %}
+
+{% for type in types.classes|annotated:"AutoFreddyDecodableRealm" %}
+// sourcery:inline:{{ type.name }}.AutoFreddyDecodableRealm
+	{% call jsonDecodable type %}
+// sourcery:end
+{% endfor %}
+
+{% for type in types.classes|annotated:"AutoFreddyEncodableRealm" %}
+// sourcery:inline:{{ type.name }}.AutoFreddyEncodableRealm
+	{% call jsonEncodable type %}
+// sourcery:end
+{% endfor %}
+
+struct JSONDateWrapper: JSONDecodable, JSONEncodable {
+    let date: Date
+    
+    init(json: JSON) throws {
+        guard case .string(let dateString) = json else {
+            throw JSON.Error.valueNotConvertible(value: json, to: JSONDateWrapper.self)
+        }
+        
+        guard let date = Date.fuzzyDateFromISOString(dateString) else {
+            throw JSON.Error.valueNotConvertible(value: json, to: JSONDateWrapper.self)
+        }
+        
+        self.date = date
+    }
+
+    init(date: Date) {
+        self.date = date
+    }
+    
+    func toJSON() -> JSON {
+        return .string(Date.ISOStringFromDate(date))
+    }
+}
+
+extension Date {
+    @nonobjc static let ISOStringFromDateFormatter: DateFormatter = {
+        var dateFormatter = DateFormatter()
+        dateFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dateFormatter.timeZone = TimeZone(abbreviation: "GMT")
+        dateFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSS"
+        return dateFormatter
+    }()
+    static func ISOStringFromDate(_ date: Date) -> String {
+        return ISOStringFromDateFormatter.string(from: date) + "Z"
+    }
+
+    @nonobjc static let dateFromISOStringFormatter: DateFormatter = {
+        var dateFormatter = DateFormatter()
+        dateFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dateFormatter.timeZone = TimeZone.autoupdatingCurrent
+        dateFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSZ"
+        return dateFormatter
+    }()
+    static func dateFromISOString(_ string: String) -> Date? {
+        return dateFromISOStringFormatter.date(from: string)
+    }
+
+    @nonobjc static let dateFromISOWithoutSubsecondsStringFormatter: DateFormatter = {
+        var dateFormatter = DateFormatter()
+        dateFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dateFormatter.timeZone = TimeZone.autoupdatingCurrent
+        dateFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ssZ"
+        return dateFormatter
+    }()
+    static func fuzzyDateFromISOString(_ string: String) -> Date? {
+        var modString = string
+        if let dotRange = string.range(of: ".") {
+            modString.removeSubrange(dotRange.lowerBound..<string.endIndex)
+        }
+        return dateFromISOStringFormatter.date(from: string)
+            ?? dateFromISOWithoutSubsecondsStringFormatter.date(from: string)
+            ?? dateFromISOWithoutSubsecondsStringFormatter.date(from: "\(string)Z")
+            ?? dateFromISOWithoutSubsecondsStringFormatter.date(from: modString)
+            ?? dateFromISOWithoutSubsecondsStringFormatter.date(from: "\(modString)Z")
+    }
+    
+    private static var timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
+    func toTimeString() -> String {
+        return Date.timeFormatter.string(from: self)
+    }
+}
+
