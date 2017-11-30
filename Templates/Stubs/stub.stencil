@@ -1,0 +1,52 @@
+{# NOTE: These imports are defined in .sourcery.yml, they are not imports pulled from code! #}
+{% for argument in argument.imports %}
+import {{ argument }}
+{% endfor %}
+import Fakery
+
+{% macro stubValue variable %}{#
+#}{% if variable.annotations.StubValue %}{{ variable.annotations.StubValue }}{% else %}{#
+#}{% if variable.type.annotations.AutoStubbable %}{{ variable.unwrappedTypeName }}.stub(){% else %}{#
+#}{% if variable.isArray %}[]{% else %}{#
+#}{% if variable.unwrappedTypeName == "Int" %}Faker.shared.number.randomInt(){% else %}{#
+#}{% if variable.unwrappedTypeName == "String" %}.random{% else %}{#
+#}{% if variable.unwrappedTypeName == "Double" %}Faker.shared.number.randomDouble(){% else %}{#
+#}{% if variable.unwrappedTypeName == "Bool" %}Faker.shared.number.randomBool(){% else %}{#
+#}{% if variable.unwrappedTypeName == "Date" %}Date(){% else %}{#
+#}{% if variable.unwrappedTypeName == "Decimal" %}Decimal(Faker.shared.number.randomDouble()){% else %}{#
+#}{% if variable.unwrappedTypeName == "URL" %}URL(string: "www.google.ca")!{% else %}{#
+#}{% if variable.unwrappedTypeName == "Float" %}Faker.shared.number.randomFloat(){% else %}{#
+#}{% if variable.unwrappedTypeName == "UIImage" %}UIImage(){% else %}{#
+#}{{ variable.unwrappedTypeName }}(){#
+#}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{% endif %}{#
+#}{% endmacro %}
+
+{% macro stub type %}
+{{ type.accessLevel }} extension {{ type.name }} {
+	static func stub (
+		{% for variable in type.storedVariables|!annotated:"NoStub" %}
+		{{ variable.name }}: {{ variable.typeName }} = {% call stubValue variable %}{% if not forloop.last %},{% endif %}
+		{% endfor %}
+	) -> {{ type.name }} {
+		{% call stubReturn type %}
+	}
+}
+{% endmacro %}
+
+{% macro stubReturn type %}
+		return {{ type.name }}(
+			{% for variable in type.storedVariables|!annotated:"NoStub" %}
+			{{ variable.name }}: {{ variable.name }}{% if not forloop.last %},{% endif %}
+			{% endfor %}
+			)
+{% endmacro %}
+
+// Options: NoStub - skips property to stub
+
+{% for type in types.structs|annotated:"AutoStubbable" %}
+{% call stub type %}
+{% endfor %}
+
+{% for type in types.classes|annotated:"AutoStubbable" %}
+{% call stub type %}
+{% endfor %}
