@@ -1,0 +1,142 @@
+{% for importable in argument.imports %}
+import {{ importable }}
+{% empty %}{% endfor %}
+{% for importable in argument.testImports %}
+import {{ importable }}
+{% empty %}{% endfor %}
+{# ---------------------- #}
+{# --- Macro: accessLevel --- #}
+{# ---------------------- #}
+{% macro accessLevel type %}{% if type.accessLevel != "internal" %}{{ type.accessLevel }} {% endif %}{% endmacro %}
+{# ---------------------- #}
+{# --- Macro: stubValue --- #}
+{# ---------------------- #}
+{% macro stubValue variable %}{% filter removeNewlines:"leading" %}
+{% if variable.annotations.StubValue and variable.unwrappedTypeName == "String" and variable.annotations.StubValue|!hasPrefix:"String." and variable.annotations.StubValue|!hasPrefix:"String(" and variable.annotations.StubValue != "nil" %}
+    "{{ variable.annotations.StubValue }}"
+{% elif variable.annotations.StubValue %}
+    {{ variable.annotations.StubValue }}
+{% elif variable.unwrappedTypeName|contains:"JSONArray" %}
+    []
+{% elif variable.type.annotations.DefaultStubValue %}
+    {{ variable.type.annotations.DefaultStubValue }}
+{% elif variable.type.annotations.AutoStubbable %}
+    {{ variable.unwrappedTypeName }}.stub()
+{% elif variable.type.annotations.AutoStubFromInit %}
+    {{ variable.unwrappedTypeName }}.stub()
+{% elif variable.isArray %}
+    []
+{% elif variable.type.kind == "enum" %}
+    .{{ variable.type.cases.first.name}}
+{% elif variable.unwrappedTypeName == "JSONDataObject" %}
+    {{ variable.unwrappedTypeName }}.stub()
+{% elif variable.unwrappedTypeName == "Int" or variable.unwrappedTypeName == "Any" %}
+    14
+{% elif variable.unwrappedTypeName == "String" %}
+    "Bob"
+{% elif variable.unwrappedTypeName == "Double" or variable.unwrappedTypeName == "Decimal" %}
+    3.14
+{% elif variable.unwrappedTypeName == "CLLocationDegrees" %}
+    0.0
+{% elif variable.unwrappedTypeName == "Bool" %}
+    false
+{% elif variable.unwrappedTypeName == "Date" %}
+    Date(timeIntervalSince1970: 100)
+{% elif variable.unwrappedTypeName == "LengthLimitedString" %}
+    LengthLimitedString(maxLength: 4, value: "1234")
+{% elif variable.unwrappedTypeName == "URL" %}
+    URL(string: "www.google.ca")!
+{% elif variable.unwrappedTypeName == "UIImage" %}
+    UIImage()
+{% elif variable.unwrappedTypeName == "UIColor" %}
+    UIColor.blue
+{% elif variable.unwrappedTypeName == "Error" %}
+    NSError(domain: "test", code: -1, userInfo: nil)
+{% else %}
+    {{ variable.unwrappedTypeName }}()
+{% endif %}
+{% endfilter %}{% endmacro %}
+{# ---------------------- #}
+{# --- Macro: stub --- #}
+{# ---------------------- #}
+{% macro stub type %}
+{% if type.annotations.PublicStub %}
+// sourcery:file:PublicStubs/{{ type.localName }}Stub
+{% for importable in argument.imports %}
+import {{ importable }}
+{% endfor %}
+{% endif %}
+{% call accessLevel type %}extension {{ type.name }} {
+    static func stub{% if type.storedVariables.count == 0 %}(){% else %}(
+    {% for variable in type.storedVariables %}
+        {{ variable.name }}: {{ variable.typeName }} = {% call stubValue variable %}{% if not forloop.last %},{% endif %}
+    {% endfor %}
+    ){% endif %} -> {{ type.name }} {
+        {% if type.kind == "class" and not type.annotations.DefaultInit %}
+        let stub = {{ type.name }}()
+        {% for variable in type.storedVariables %}
+            stub.{{ variable.name }} = {{ variable.name }}
+        {% endfor %}
+        return stub
+        {% else %}
+        return {{ type.name }}{% if type.storedVariables.count == 0 %}(){% else %}(
+        {% for variable in type.storedVariables %}
+            {{ variable.name }}: {{ variable.name }}{% if not forloop.last %},{% endif %}
+        {% endfor %}
+        ){% endif %}{% endif %}
+    }
+}
+{% if type.annotations.PublicStub %}
+// sourcery:end
+{% endif %}
+
+{% endmacro %}
+{# ---------------------- #}
+{# --- Macro: stubFromInit --- #}
+{# ---------------------- #}
+{% macro stubFromInit type %}
+{% if type.annotations.PublicStub %}
+// sourcery:file:PublicStubs/{{ type.localName }}Stub
+{% for importable in argument.imports %}
+import {{ importable }}
+{% endfor %}
+{% endif %}
+{% call accessLevel type %}extension {{ type.name }} {
+{% for function in type.methods|annotated:"StubInit" %}
+    static func stub(
+    {% for parameter in function.parameters %}
+        {{ parameter.argumentLabel }}: {{ parameter.typeName }} = {% call stubValue parameter %}{% if not forloop.last %},{% endif %}
+    {% empty %}{% endfor %}
+    ) -> {{ type.name }} {
+        return {{ type.name }}(
+        {% for parameter in function.parameters %}
+            {{ parameter.argumentLabel }}: {{ parameter.argumentLabel }}{% if not forloop.last %},{% endif %}
+    {% empty %}{% endfor %}
+        ){% if function.isFailableInitializer %}!{% endif %}
+    }
+{% endfor %}
+}
+{% if type.annotations.PublicStub %}
+// sourcery:end
+{% endif %}
+{% endmacro %}
+
+{# ---------------------- #}
+{# --- Stub Generation --- #}
+{# ---------------------- #}
+{% for type in types.classes|annotated:"AutoStubbable" %}
+{% call stub type %}
+{% empty %}{% endfor %}
+{# #}
+{% for type in types.structs|annotated:"AutoStubbable" %}
+{% call stub type %}
+{% empty %}{% endfor %}
+{# #}
+{% for type in types.classes|annotated:"AutoStubFromInit" %}
+{% call stubFromInit type %}
+{% empty %}{% endfor %}
+{# #}
+{% for type in types.structs|annotated:"AutoStubFromInit" %}
+{% call stubFromInit type %}
+{% empty %}{% endfor %}
+{# #}

@@ -1,0 +1,33 @@
+{# ---------------------- #}
+{# --- Macro: accessLevel --- #}
+{# ---------------------- #}
+{% macro accessLevel type %}{% if type.accessLevel == "open" %}public {% elif type.accessLevel != "internal" %}{{ type.accessLevel }} {% endif %}{% endmacro %}
+{# ---------------------- #}
+{# --- Macro: init --- #}
+{# ---------------------- #}
+{% macro init type %}
+{% if type.storedVariables.count == 0 %}
+{% call accessLevel type %}init() { }
+{% else %}
+{% call accessLevel type %}init(
+{% for variable in type.storedVariables %}
+    {{ variable.name }}: {{ variable.typeName }}{% if not forloop.last %}, {% endif %}
+{% endfor %}
+) {
+{% for variable in type.storedVariables %}
+    self.{{ variable.name }} = {{ variable.name }}
+{% endfor %}
+}{% endif %}
+{% endmacro %}
+
+{% for type in types.classes|annotated:"DefaultInit" %}
+// sourcery:inline:{{ type.name }}.DefaultInit
+{% call init type %}
+// sourcery:end
+{% endfor %}
+
+{% for type in types.structs|annotated:"DefaultInit" %}
+// sourcery:inline:{{ type.name }}.DefaultInit
+{% call init type %}
+// sourcery:end
+{% endfor %}

@@ -1,85 +1,203 @@
-{% for argument in argument.imports %}
-import {{ argument }}
+{% macro returnType method type %}{#
+#}{% if method.returnTypeName.unwrappedTypeName == "Self" %}{{ type.name }}Mock{% if method.returnTypeName.isOptional %}?{% endif%}{% else %}{{ method.returnTypeName }}{% endif %}{#
+#}{% endmacro %}
+{% for importable in argument.imports %}
+import {{ importable }}
 {% endfor %}
-{% if argument.app %}@testable import {{ argument.app }}{% endif %}
+{% for importable in argument.testImports %}
+import {{ importable }}
+{% empty %}{% endfor %}
+{% if argument.app == "HealthConnect" %}
+@testable import HealthConnect
+{% else %}
+@testable import {{ argument.app }}
+{% endif %}
+{% macro optionalParam param %}{#
+#}{% if param.typeName.isClosure and not param.typeName.actualTypeName %}({{ param.typeName.unwrappedTypeName }})?{% else %}{{ param.typeName.unwrappedTypeName }}?{% endif %}{#
+#}{% endmacro %}
+{% macro accessLevel type %}{% if type.accessLevel != "internal" %}{{ type.accessLevel }} {% endif %}{% endmacro %}{#
+#}{% macro saveParmetersVar method %}{#
+#}{% for param in method.parameters|annotated:"SaveParameters" %}
+    public var {{ method.annotations.StubName|default:method.shortName }}{{ param.name|upperFirstLetter }}Received: [{{ param.typeName.unwrappedTypeName }}] = []{#
+#}{% endfor %}{#
+#}{% endmacro %}
+{% macro saveParmetersAppend method %}{#
+#}{% for param in method.parameters|annotated:"SaveParameters" %}
+        {{ method.annotations.StubName|default:method.shortName }}{{ param.name|upperFirstLetter }}Received.append({{ param.name }}){#
+#}{% endfor %}{#
+#}{% endmacro %}
 
+// swiftlint:disable all
+{# ---------------------- #}
+{# --- PROTOCOL MOCKS --- #}
+{# ---------------------- #}
 {% for type in types.protocols %}
 {% if type.annotations.AutoMockable %}
-public class {{ type.name }}Mock: {% if type.annotations.MockBaseClass %}{{ type.annotations.MockBaseClass }}, {% endif %}{{ type.name }} {
+{% if type.annotations.PublicMock %}
+// sourcery:file:PublicMocks/{{ type.name}}Mock
+{% for importable in argument.imports %}
+import {{ importable }}
+{% endfor %}
+{% if argument.app %}@testable import {{ argument.app }}{% endif %}
+{% endif %}
+{% call accessLevel type %}final class {{ type.name }}Mock: {% if type.annotations.MockBaseClass %}{{ type.annotations.MockBaseClass }}, {% endif %}{{ type.name }} {
 
-    {% for variable in type.allVariables|!annotated:"NoMock" %}
-    public var {{ variable.name }}SetCount = 0
-    public var {{ variable.name }}: {{ variable.typeName }}{% if not variable.isOptional %}{% if variable.isArray %} = []{% endif %}{% if variable.isDictionary %} = [:]{% endif %}{% if variable|annotated:"DefaultMockValue" %} = {{ variable.annotations.DefaultMockValue }}{% endif %}{% endif %} {
+{% if type.annotations.typealias %}
+    {{ type.annotations.typealias }}
+
+{% endif %}
+{# #}
+    {% for variable in type.allVariables|!annotated:"NoMock"|!annotated:"MockProperty" %}
+    {% call accessLevel type %}var {{ variable.name }}SetCount = 0
+    {% call accessLevel type %}var {{ variable.name }}: {{ variable.typeName }}{% if not variable.isOptional %}{% if variable.isArray %} = []{% endif %}{% if variable.isDictionary %} = [:]{% endif %}{% if variable|annotated:"DefaultMockValue" %} = {{ variable.annotations.DefaultMockValue }}{% endif %}{% endif %} {
         didSet { {{ variable.name }}SetCount += 1 }
     }
+
     {% endfor %}
-
+{# #}
+    {% for variable in type.allVariables|!annotated:"NoMock"|annotated:"MockProperty" %}
+    {% call accessLevel type %}var {{ variable.name }}Mock = {{ variable.annotations.MockProperty }}
+    {% call accessLevel type %}var {{ variable.name }}: {{ variable.typeName }} {
+        return {{ variable.name }}Mock
+    }
+    {% endfor %}
+{# #}
     {% if type.allVariables.count > 0 %}
-    public init({% for variable in type.allVariables %}{{ variable.name }}: {{ variable.typeName }}{% if variable|annotated:"DefaultMockValue" %} = {{ variable.annotations.DefaultMockValue }}{% else %}{% if variable.isOptional %} = nil{% else %}{% if variable.isArray %} = []{% endif %}{% endif %}{% endif %}{% if not forloop.last %}, {% endif %}{% endfor %}) {
-        {% for variable in type.allVariables %}self.{{ variable.name }} = {{ variable.name }}
-		{% endfor %}
+    {% call accessLevel type %}init({% for variable in type.allVariables|!annotated:"NoMock"|!annotated:"MockProperty" %}{{ variable.name }}: {% if variable.isClosure and !variable.isOptional %}@escaping {% endif %}{{ variable.typeName }}{% if variable|annotated:"DefaultMockValue" %} = {{ variable.annotations.DefaultMockValue }}{% else %}{% if variable.isOptional %} = nil{% else %}{% if variable.isArray %} = []{% endif %}{% endif %}{% endif %}{% if not forloop.last %}, {% endif %}{% endfor %}) {
+        {% for variable in type.allVariables|!annotated:"NoMock"|!annotated:"MockProperty" %}
+        self.{{ variable.name }} = {{ variable.name }}
+        {% endfor %}
     }
+
 	{% else %}
-    public {% if type.annotations.MockBaseClass %}override {% endif %}init() {}
+    {% call accessLevel type %}{% if type.annotations.MockBaseClass %}override {% endif %}init() {}
+
 	{% endif %}
-
+{# #}
     {% for method in type.allMethods|!annotated:"NoMock" %}
-    // MARK: - {{ method.annotations.StubName|default:method.callName }}
-    {% if not method.shortName == "init" %}public var {{ method.annotations.StubName|default:method.callName }}CallCount = 0{% endif %}
-    {% if method.throws %}public var {{ method.annotations.StubName|default:method.callName }}ShouldThrow: Error?{% endif %}
-    {% if method.parameters.count > 2 %}// swiftlint:disable:next large_tuple {% endif %}
-    {% if method.parameters.count == 1 %}public var {{ method.annotations.StubName|default:method.callName }}Received{% for param in method.parameters %}{{ param.name|upperFirstLetter }}: {{ param.typeName.unwrappedTypeName }}?{% endfor %}{% else %}{% if not method.parameters.count == 0 %}var {{ method.annotations.StubName|default:method.callName }}ReceivedArguments: ({% for param in method.parameters %}{{ param.name }}: {% if param.typeAttributes.escaping %}{{ param.unwrappedTypeName }}{% else %}{{ param.typeName }}{% endif %}{% if not forloop.last %}, {% endif %}{% endfor %})?{% endif %}{% endif %}
-    {% if not method.returnTypeName.isVoid and not method.shortName == "init" %}public var {{ method.annotations.StubName|default:method.callName }}ReturnValue: {{ method.returnTypeName }}{% if method.annotations.DefaultReturnValue %} = {{ method.annotations.DefaultReturnValue }}{% else %}!{% endif %}{% endif %}
-    public func {{ method.shortName }}({% for param in method.parameters %}{% if param.argumentLabel == nil %}_{% else %}{{ param.argumentLabel }}{% endif %}{% if not param.argumentLabel == param.name %} {{ param.name }}{% endif %}: {{ param.typeName }}{% if not forloop.last %}, {% endif %}{% endfor %}){% if method.throws %} throws{% endif %}{% if not method.returnTypeName.isVoid %} -> {{ method.returnTypeName }}{% endif %} {
-        {% if not method.shortName == "init" %}{{ method.annotations.StubName|default:method.callName }}CallCount += 1{% endif %}
-        {%if method.parameters.count == 1 %}{{ method.annotations.StubName|default:method.callName }}Received{% for param in method.parameters %}{{ param.name|upperFirstLetter }} = {{ param.name }}{% endfor %}{% else %}{% if not method.parameters.count == 0 %}{{ method.annotations.StubName|default:method.callName }}ReceivedArguments = ({% for param in method.parameters %}{{ param.name }}: {{ param.name }}{% if not forloop.last%}, {% endif %}{% endfor %}){% endif %}{% if not method.returnTypeName.isVoid %}{% endif %}{% endif %}
-        {% if method.throws %}if let {{ method.annotations.StubName|default:method.callName }}ShouldThrow = {{ method.annotations.StubName|default:method.callName }}ShouldThrow { throw {{ method.annotations.StubName|default:method.callName }}ShouldThrow }{% endif %}
-		{% if not method.returnTypeName.isVoid and not method.shortName == "init" %}return {{ method.annotations.StubName|default:method.callName }}ReturnValue{% endif %}
-        
+    // MARK: - {{ method.annotations.StubName|default:method.shortName }}
+    {% if not method.shortName == "init" and not method.shortName == "init?" %}{% call accessLevel type %}{% if method.isStatic %}static {% endif %}var {{ method.annotations.StubName|default:method.shortName }}CallCount = 0{% endif %}
+    {% if not method.annotations.CallOnly %}
+    {% if method.throws %}{% call accessLevel type %}{% if method.isStatic %}static {% endif %}var {{ method.annotations.StubName|default:method.shortName }}ShouldThrow: Error?{% endif %}
+    {% if method.parameters.count == 1 %}{#
+      #}{% call accessLevel type %}{% if method.isStatic %}static {% endif %}var {{ method.annotations.StubName|default:method.shortName }}Received{#
+      #}{% for param in method.parameters %}{#
+        #}{{ param.name|upperFirstLetter }}: {% call optionalParam param %}{#
+      #}{% endfor %}{#
+    #}{% else %}{#
+      #}{% if not method.parameters.count == 0 %}{#
+        #}{% call accessLevel type %}{% if method.isStatic %}static {% endif %}var {{ method.annotations.StubName|default:method.shortName }}ReceivedArguments: {#
+        #}{% if method.annotations.ArgumentsType %}{{ method.annotations.ArgumentsType }}{#
+        #}{% else %}({#
+          #}{% for param in method.parameters %}{{ param.name }}: {#
+            #}{% if param.typeAttributes.escaping %}{{ param.unwrappedTypeName }}{#
+            #}{% else %}{{ param.typeName }}{#
+            #}{% endif %}{#
+            #}{% if not forloop.last %}, {#
+            #}{% endif %}{#
+          #}{% endfor %})?{#
+        #}{% endif %}{#
+      #}{% endif %}{#
+    #}{% endif %}
+    {% if not method.returnTypeName.isVoid and not method.shortName == "init" and not method.shortName == "init?" %}{% call accessLevel type %}{% if method.isStatic %}static {% endif %}var {{ method.annotations.StubName|default:method.shortName }}ReturnValue: {% call returnType method type %}{% if method.annotations.DefaultReturnValue %} = {{ method.annotations.DefaultReturnValue }}{% else %}{% if not method.returnTypeName.isOptional %}!{% endif %}{% endif %}{% endif %}
+    {% if method.annotations.PendingPromise %}{% call accessLevel type %}var {{ method.annotations.StubName|default:method.shortName }}PendingPromise = {% call returnType method type %}.pending(){% endif %}
+    {% if method.annotations.MockBody %}{% call accessLevel type %}var {{ method.annotations.StubName|default:method.shortName }}MockBody: (() -> (Void))? = nil {% endif %}
+    {% endif %}{#
+    #}{% call saveParmetersVar method %}{#
+    #}
+    {% call accessLevel type %}{% if method.isStatic %}static {% endif %}{% if not method.shortName == "init" and not method.shortName == "init?" %}func{% endif %} {{ method.shortName }}({% for param in method.parameters %}{% if param.argumentLabel == nil %}_{% else %}{{ param.argumentLabel }}{% endif %}{% if not param.argumentLabel == param.name %} {{ param.name }}{% endif %}: {{ param.typeName }}{% if not forloop.last %}, {% endif %}{% endfor %}){% if method.throws %} throws{% endif %}{% if not method.returnTypeName.isVoid and not method.shortName == "init" and not method.shortName == "init?" %} -> {% call returnType method type %}{% endif %} {
+        {% if not method.shortName == "init" and not method.shortName == "init?" %}{{ method.annotations.StubName|default:method.shortName }}CallCount += 1{% endif %}
+        {% if not method.annotations.CallOnly %}
+        {%if method.parameters.count == 1 %}{{ method.annotations.StubName|default:method.shortName }}Received{% for param in method.parameters %}{{ param.name|upperFirstLetter }} = {{ param.name }}{% endfor %}{% else %}{% if not method.parameters.count == 0 %}{{ method.annotations.StubName|default:method.shortName }}ReceivedArguments = ({% for param in method.parameters %}{{ param.name }}: {{ param.name }}{% if not forloop.last%}, {% endif %}{% endfor %}){% endif %}{% if not method.returnTypeName.isVoid %}{% endif %}{% endif %}
+        {% if method.throws %}if let {{ method.annotations.StubName|default:method.shortName }}ShouldThrow = {{ method.annotations.StubName|default:method.shortName }}ShouldThrow { throw {{ method.annotations.StubName|default:method.shortName }}ShouldThrow }{% endif %}
+        {% if method.annotations.PendingPromise %}{{ method.annotations.StubName|default:method.shortName }}ReturnValue = {{ method.annotations.StubName|default:method.shortName }}PendingPromise.promise{% endif %}{#
+        #}{% call saveParmetersAppend method %}{#
+        #}
+        {% if not method.returnTypeName.isVoid and not method.shortName == "init" and not method.shortName == "init?" %}return {{ method.annotations.StubName|default:method.shortName }}ReturnValue{% endif %}
+        {% else %}
+        {% if method.annotations.CallOnlyBody %}{{ method.annotations.CallOnlyBody }}{% endif %}
+        {% endif %}
+        {% if method.annotations.MockBody %}{{ method.annotations.StubName|default:method.shortName }}MockBody?(){% endif %}
+        {% if method.annotations.ReturnValue %}{{ method.annotations.ReturnValue }}{% endif %}
     }
-
 {% endfor %}
 }
-
+{% if type.annotations.PublicMock %}
+// sourcery:end
+{% endif %}
 {% endif %}
 {% endfor %}
 
+{# ------------------- #}
+{# --- CLASS MOCKS --- #}
+{# ------------------- #}
 {% for type in types.classes %}
 {% if type.annotations.AutoMockable %}
-public class {{ type.name }}Mock: {% if type.annotations.MockBaseClass %}{{ type.annotations.MockBaseClass }}, {% endif %}{{ type.name }} {
+{% if type.annotations.PublicMock %}
+// sourcery:file:PublicMocks/{{ type.name}}Mock
+{% for importable in argument.imports %}
+import {{ importable }}
+{% endfor %}
+{% if argument.app %}@testable import {{ argument.app }}{% endif %}
+{% endif %}
+{% call accessLevel type %}class {{ type.name }}Mock: {% if type.annotations.MockBaseClass %}{{ type.annotations.MockBaseClass }}, {% endif %}{{ type.name }} {
 
-    {% for variable in type.allVariables|!annotated:"NoMock" %}
-    {% if variable.writeAccess == "public" or variable.writeAccess == "internal" %}
-    public var {{ variable.name }}SetCount = 0
-    public override var {{ variable.name }}: {{ variable.typeName }}{% if not variable.isOptional %}{% if variable.isArray %} = []{% endif %}{% if variable.isDictionary %} = [:]{% endif %}{% if variable|annotated:"DefaultMockValue" %} = {{ variable.annotations.DefaultMockValue }}{% endif %}{% endif %} {
+    {% for variable in type.allVariables|!annotated:"NoMock"|!annotated:"MockProperty"|!annotated:"SkipMockVariables"%}
+    {% if variable.writeAccess == "internal" or variable.writeAccess == "public" %}
+    {% call accessLevel type %}var {{ variable.name }}SetCount = 0
+    {% call accessLevel type %}override var {{ variable.name }}: {{ variable.typeName }}{% if not variable.isOptional %}{% if variable.isArray %} = []{% endif %}{% if variable.isDictionary %} = [:]{% endif %}{% if variable|annotated:"DefaultMockValue" %} = {{ variable.annotations.DefaultMockValue }}{% endif %}{% endif %} {
         didSet { {{ variable.name }}SetCount += 1 }
     }
+
 	{% endif %}
     {% endfor %}
-	
+{# #}
+    {% for variable in type.allVariables|!annotated:"NoMock"|!annotated:"SkipMockVariables"|annotated:"MockProperty" %}
+    {% call accessLevel type %}var {{ variable.name }}Mock = {{ variable.annotations.MockProperty }}
+    {% call accessLevel type %}override var {{ variable.name }}: {{ variable.typeName }} {
+        return {{ variable.name }}Mock
+    }
+    {% endfor %}
+{# #}
 	{% if type.annotations.MockInitializerBody %}
-    public init() {
+    {% call accessLevel type %}init() {
         {{ type.annotations.MockInitializerBody }}
     }
-	{% endif %}
 
-    {% for method in type.allMethods|!annotated:"NoMock" %}
-    {% if not method.shortName == "init" and not method.accessLevel == "private" and not method.accessLevel == "fileprivate" %}
-    // MARK: - {{ method.annotations.StubName|default:method.callName }}
-	public var {{ method.annotations.StubName|default:method.callName }}CallCount = 0
-    {% if method.throws %}public var {{ method.annotations.StubName|default:method.callName }}ShouldThrow: Error?{% endif %}
-    {% if method.parameters.count > 2 %}// swiftlint:disable:next large_tuple {% endif %}
-    {% if method.parameters.count == 1 %}public var {{ method.annotations.StubName|default:method.callName }}Received{% for param in method.parameters %}{{ param.name|upperFirstLetter }}: {{ param.typeName.unwrappedTypeName }}?{% endfor %}{% else %}{% if not method.parameters.count == 0 %}var {{ method.annotations.StubName|default:method.callName }}ReceivedArguments: ({% for param in method.parameters %}{{ param.name }}: {% if param.typeAttributes.escaping %}{{ param.unwrappedTypeName }}{% else %}{{ param.typeName }}{% endif %}{% if not forloop.last %}, {% endif %}{% endfor %})?{% endif %}{% endif %}
-    {% if not method.returnTypeName.isVoid %}public var {{ method.annotations.StubName|default:method.callName }}ReturnValue: {{ method.returnTypeName }}!{% endif %}
-    public override func {{ method.annotations.StubName|default:method.callName }}({% for param in method.parameters %}{% if param.argumentLabel == nil %}_{% else %}{{ param.argumentLabel }}{% endif %}{% if not param.argumentLabel == param.name %} {{ param.name }}{% endif %}: {{ param.typeName }}{% if not forloop.last %}, {% endif %}{% endfor %}){% if method.throws %} throws{% endif %}{% if not method.returnTypeName.isVoid %} -> {{ method.returnTypeName }}{% endif %} {
-        {{ method.annotations.StubName|default:method.callName }}CallCount += 1
-        {%if method.parameters.count == 1 %}{{ method.annotations.StubName|default:method.callName }}Received{% for param in method.parameters %}{{ param.name|upperFirstLetter }} = {{ param.name }}{% endfor %}{% else %}{% if not method.parameters.count == 0 %}{{ method.annotations.StubName|default:method.callName }}ReceivedArguments = ({% for param in method.parameters %}{{ param.name }}: {{ param.name }}{% if not forloop.last%}, {% endif %}{% endfor %}){% endif %}{% if not method.returnTypeName.isVoid %}{% endif %}{% endif %}
-        {% if method.throws %}if let {{ method.annotations.StubName|default:method.callName }}ShouldThrow = {{ method.annotations.StubName|default:method.callName }}ShouldThrow { throw {{ method.annotations.StubName|default:method.callName }}ShouldThrow }{% endif %}
-		{% if not method.returnTypeName.isVoid %}return {{ method.annotations.StubName|default:method.callName }}ReturnValue{% endif %}
+	{% endif %}
+{# #}
+	{% for method in type.allMethods|!annotated:"NoMock" %}
+    {% if method.shortName == "init" or method.shortName == "init?" %}
+	{% if not method.parameters.count == 0 or not type.annotations.MockInitializerBody %}
+	{% if method.isRequired %}
+    {% call accessLevel type %}required {{ method.name }} {
+        super.init({% for parameter in method.parameters %}{{ parameter.name }}: {{ parameter.name }}{% if not forloop.last %},{% endif %}{% endfor %})
+    }
+
+	{% endif %}{% endif %}
+	{% endif %}
+	{% endfor %}
+{# #}
+    {% for method in type.methods|!annotated:"NoMock" %}
+    {% if not method.shortName == "init" and not method.shortName == "init?" and not method.accessLevel == "private" and not method.accessLevel == "fileprivate" %}
+    // MARK: - {{ method.annotations.StubName|default:method.shortName }}
+    {% call accessLevel type %}var {{ method.annotations.StubName|default:method.shortName }}CallCount = 0
+    {% if method.throws %}{% call accessLevel type %}var {{ method.annotations.StubName|default:method.shortName }}ShouldThrow: Error?{% endif %}
+    {% if method.parameters.count == 1 %}{% call accessLevel type %}var {{ method.annotations.StubName|default:method.shortName }}Received{% for param in method.parameters %}{{ param.name|upperFirstLetter }}: {% call optionalParam param %}{% endfor %}{% else %}{% if not method.parameters.count == 0 %}var {{ method.annotations.StubName|default:method.shortName }}ReceivedArguments: ({% for param in method.parameters %}{{ param.name }}: {% if param.typeAttributes.escaping %}{{ param.unwrappedTypeName }}{% else %}{{ param.typeName }}{% endif %}{% if not forloop.last %}, {% endif %}{% endfor %})?{% endif %}{% endif %}
+    {% if not method.returnTypeName.isVoid %}{% call accessLevel type %}var {{ method.annotations.StubName|default:method.shortName }}ReturnValue: {{ method.returnTypeName }}{% if method.annotations.DefaultReturnValue %} = {{ method.annotations.DefaultReturnValue }}{% else %}{% if not method.returnTypeName.isOptional %}!{% endif %}{% endif %}{% endif %}
+    {% call accessLevel type %}override func {{ method.shortName }}({% for param in method.parameters %}{% if param.argumentLabel == nil %}_{% else %}{{ param.argumentLabel }}{% endif %}{% if not param.argumentLabel == param.name %} {{ param.name }}{% endif %}: {{ param.typeName }}{% if not forloop.last %}, {% endif %}{% endfor %}){% if method.throws %} throws{% endif %}{% if not method.returnTypeName.isVoid %}{% if not method.returnTypeName.isVoid and not method.shortName == "init" and not method.shortName == "init?" %} -> {% call returnType method type %}{% endif %}{% endif %} {
+        {{ method.annotations.StubName|default:method.shortName }}CallCount += 1
+        {%if method.parameters.count == 1 %}{{ method.annotations.StubName|default:method.shortName }}Received{% for param in method.parameters %}{{ param.name|upperFirstLetter }} = {{ param.name }}{% endfor %}{% else %}{% if not method.parameters.count == 0 %}{{ method.annotations.StubName|default:method.shortName }}ReceivedArguments = ({% for param in method.parameters %}{{ param.name }}: {{ param.name }}{% if not forloop.last%}, {% endif %}{% endfor %}){% endif %}{% if not method.returnTypeName.isVoid %}{% endif %}{% endif %}
+        {% if method.throws %}if let {{ method.annotations.StubName|default:method.shortName }}ShouldThrow = {{ method.annotations.StubName|default:method.shortName }}ShouldThrow { throw {{ method.annotations.StubName|default:method.shortName }}ShouldThrow }{% endif %}
+        {% if method.annotations.StubCallSuper %}super.{{ method.shortName }}({% for parameter in method.parameters %}{% if param.argumentLabel %}{{ param.argumentLabel }}: {% endif %}{{ param.name }}{% if not forloop.last %},{% endif %}{% endfor %}){% endif %}
+        {% if not method.returnTypeName.isVoid %}return {{ method.annotations.StubName|default:method.shortName }}ReturnValue{% endif %}
     }
 	{% endif %} {# Checking for init and access level #}
 {% endfor %}
 }
-
+{% if type.annotations.PublicMock %}
+// sourcery:end
+{% endif %}
 {% endif %}
 {% endfor %}
+// swiftlint:enable all
